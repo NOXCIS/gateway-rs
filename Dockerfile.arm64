@@ -1,0 +1,39 @@
+# Dockerfile.arm64 - Specialized for Pisces P100 and other ARM64 devices
+FROM rust:alpine3.17 AS builder
+
+# Install build dependencies
+RUN apk add --no-cache --update \
+    clang15-libclang \
+    cmake \
+    g++ \
+    gcc \
+    libc-dev \
+    musl-dev \
+    protobuf \
+    libgcc
+
+# Copy source code
+WORKDIR /app
+COPY . .
+
+# Build with ECC608 support
+ENV RUST_BACKTRACE=1
+RUN cargo build --release --no-default-features --features=ecc608
+
+# Runtime image
+FROM alpine:3.17.3
+
+# Install runtime dependencies
+RUN apk add --no-cache --update libstdc++
+
+# Set environment variables
+ENV RUST_BACKTRACE=1
+ENV GW_LISTEN="0.0.0.0:1680"
+
+# Copy the binary and config
+COPY --from=builder /app/target/release/helium_gateway /usr/local/bin/helium_gateway
+RUN mkdir -p /etc/helium_gateway
+COPY config/settings.toml /etc/helium_gateway/settings.toml
+
+# Run the gateway
+CMD ["helium_gateway", "server"] 

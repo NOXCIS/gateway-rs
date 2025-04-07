@@ -35,7 +35,8 @@ RUN apk add --no-cache --update \
     libc-dev \
     musl-dev \
     protobuf \
-    tpm2-tss-dev
+    tpm2-tss-dev \
+    libgcc
 
 WORKDIR /tmp/helium_gateway
 COPY . .
@@ -49,22 +50,30 @@ case "$BUILDPLATFORM $TARGETPLATFORM" in \
         rustup target add aarch64-unknown-linux-musl ; \
         echo "aarch64-unknown-linux-musl" > rust_target.txt ; \
         echo "--target=aarch64-unknown-linux-musl" > cargo_flags.txt ; \
+        apk add --no-cache gcc-aarch64-none-elf musl-dev-aarch64 ; \
         ;; \
     "linux/amd64 linux/amd64") \
         echo > rust_target.txt ; \
         echo "--features=tpm" > cargo_flags.txt ; \
+        ;; \
+    "linux/arm64 linux/arm64") \
+        echo > rust_target.txt ; \
+        echo "--features=ecc608" > cargo_flags.txt ; \
         ;; \
     *) \
         exit 1 \
         ;; \
 esac
 
+# Environment setup for cross-compilation
 ENV CC_aarch64_unknown_linux_musl=clang
 ENV AR_aarch64_unknown_linux_musl=llvm-ar
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Clink-self-contained=yes -Clinker=rust-lld"
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-none-elf-gcc
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C link-arg=-lgcc"
 
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Ctarget-feature=-crt-static"
 
+# Build with a single command to avoid caching issues
 RUN cargo build --release $(cat cargo_flags.txt)
 RUN mv target/$(cat rust_target.txt)/release/helium_gateway .
 
@@ -80,7 +89,7 @@ ENV RUST_BACKTRACE=1
 ENV GW_LISTEN="0.0.0.0:1680"
 ARG TARGETPLATFORM
 
-# We will never enable TPM on anything other than x86
+# Install required packages based on architecture
 RUN \
 if [ "$TARGETPLATFORM" = "linux/amd64" ]; \
     then apk add --no-cache --update \
@@ -90,9 +99,12 @@ if [ "$TARGETPLATFORM" = "linux/amd64" ]; \
     tpm2-tss-mu \
     tpm2-tss-rc \
     tpm2-tss-tcti-device ; \
+elif [ "$TARGETPLATFORM" = "linux/arm64" ]; \
+    then apk add --no-cache --update \
+    libstdc++ ; \
 fi
 
 COPY --from=cargo-build /tmp/helium_gateway/helium_gateway /usr/local/bin/helium_gateway
-RUN mkdir /etc/helium_gateway
+RUN mkdir -p /etc/helium_gateway
 COPY config/settings.toml /etc/helium_gateway/settings.toml
 CMD ["helium_gateway", "server"]

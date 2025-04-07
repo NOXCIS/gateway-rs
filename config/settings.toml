@@ -4,12 +4,12 @@
 ## the secrets. The default one is file based one since all devices 
 ## can support it.
 
-# File based: 
-keypair = "/etc/helium_gateway/gateway_key.bin"
+# File based (commented out for Pisces P100 which uses ECC): 
+# keypair = "/etc/helium_gateway/gateway_key.bin"
 
-# Ecc608 based:
-# keypair = "ecc://i2c-1:96?slot=0"
-# onboarding = "ecc://i2c-1:96?slot=15"
+# Ecc608 based for Pisces P100:
+keypair = "ecc://i2c-1:96?slot=0"
+onboarding = "ecc://i2c-1:96?slot=15"
 
 # The address to listen on for the (semtech) packet forwarder
 listen = "127.0.0.1:1680"

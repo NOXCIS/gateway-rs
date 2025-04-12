@@ -23,41 +23,41 @@
 # ------------------------------------------------------------------------------
 # Cargo Build Stage
 #
-# Runs on native host architecture
-# Cross compiles for target architecture
+# Uses platform-specific emulation instead of cross-compilation
 # ------------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM rust:alpine3.17 AS cargo-build
+FROM rust:alpine3.17 AS cargo-build
+
+ARG TARGETPLATFORM
+
+# Install build dependencies
 RUN apk add --no-cache --update \
-    clang15-libclang \
+    clang \
     cmake \
     g++ \
     gcc \
     libc-dev \
     musl-dev \
-    protobuf \
-    tpm2-tss-dev \
-    libgcc
+    libgcc \
+    protobuf
 
 WORKDIR /tmp/helium_gateway
-COPY . .
 
-ARG BUILDPLATFORM
-ARG TARGETPLATFORM
+# First, copy just what we need for dependency calculation
+COPY Cargo.toml Cargo.lock ./
+COPY lorawan ./lorawan
 
+# Create dummy main.rs 
+RUN mkdir -p src && \
+    echo 'fn main() { println!("Dummy"); }' > src/main.rs
+
+# Configure build flags based on target platform
 RUN \
-case "$BUILDPLATFORM $TARGETPLATFORM" in \
-    "linux/amd64 linux/arm64") \
-        rustup target add aarch64-unknown-linux-musl ; \
-        echo "aarch64-unknown-linux-musl" > rust_target.txt ; \
-        echo "--target=aarch64-unknown-linux-musl" > cargo_flags.txt ; \
-        apk add --no-cache gcc-aarch64-none-elf musl-dev-aarch64 ; \
-        ;; \
-    "linux/amd64 linux/amd64") \
-        echo > rust_target.txt ; \
+case "$TARGETPLATFORM" in \
+    "linux/amd64") \
         echo "--features=tpm" > cargo_flags.txt ; \
+        apk add --no-cache --update tpm2-tss-dev ; \
         ;; \
-    "linux/arm64 linux/arm64") \
-        echo > rust_target.txt ; \
+    "linux/arm64") \
         echo "--features=ecc608" > cargo_flags.txt ; \
         ;; \
     *) \
@@ -65,18 +65,15 @@ case "$BUILDPLATFORM $TARGETPLATFORM" in \
         ;; \
 esac
 
-# Environment setup for cross-compilation
-ENV CC_aarch64_unknown_linux_musl=clang
-ENV AR_aarch64_unknown_linux_musl=llvm-ar
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-none-elf-gcc
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C link-arg=-lgcc"
-
-ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Ctarget-feature=-crt-static"
-
-# Build with a single command to avoid caching issues
+# Build dependencies
 RUN cargo build --release $(cat cargo_flags.txt)
-RUN mv target/$(cat rust_target.txt)/release/helium_gateway .
 
+# Copy the actual source code
+COPY src ./src
+COPY config ./config
+
+# Build using the platform-specific compiler
+RUN cargo build --release $(cat cargo_flags.txt)
 
 # ------------------------------------------------------------------------------
 # Final Stage
@@ -104,7 +101,7 @@ elif [ "$TARGETPLATFORM" = "linux/arm64" ]; \
     libstdc++ ; \
 fi
 
-COPY --from=cargo-build /tmp/helium_gateway/helium_gateway /usr/local/bin/helium_gateway
+COPY --from=cargo-build /tmp/helium_gateway/target/release/helium_gateway /usr/local/bin/helium_gateway
 RUN mkdir -p /etc/helium_gateway
 COPY config/settings.toml /etc/helium_gateway/settings.toml
 CMD ["helium_gateway", "server"]
